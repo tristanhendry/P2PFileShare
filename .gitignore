@@ -1,0 +1,4 @@
+build/
+*.log
+peer_*/
+.DS_Store
