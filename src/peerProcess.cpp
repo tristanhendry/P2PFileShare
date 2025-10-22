@@ -26,10 +26,15 @@ int main(int argc, char** argv){
 
 // Assume working dir is current directory
         std::string workDir = std::filesystem::current_path().string();
-        auto cfg = ConfigBundle::load(selfId, workDir+"/Common.cfg", workDir+"/PeerInfo.cfg", workDir);
+        std::string rootDir = std::filesystem::path(workDir).parent_path().string();
+        auto cfg = ConfigBundle::load(selfId, rootDir+"/Common.cfg", rootDir+"/PeerInfo.cfg", rootDir);
 
         Logger logger(cfg.paths.logFile);
+        std::cout << "Log file path: " << cfg.paths.logFile << std::endl;
+        std::cout.flush();
         logger.info("peerProcess starting for peerId=" + std::to_string(selfId));
+        std::cout << "Logged startup message" << std::endl;
+        std::cout.flush();
 
 // Bitfield setup
         size_t pieces = computePieceCount(cfg.common.fileSizeBytes, cfg.common.pieceSizeBytes);

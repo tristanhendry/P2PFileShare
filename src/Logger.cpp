@@ -1,11 +1,16 @@
 #include "p2p/Logger.hpp"
-
+#include <iostream>
 #include <iomanip>
 #include <sstream>
 
 namespace p2p {
 
-    Logger::Logger(std::string path) : out_(std::move(path), std::ios::app) {}
+    Logger::Logger(std::string path) : out_(std::move(path), std::ios::app) {
+        if (!out_) {
+            std::cerr << "Failed to open log file: " << path << std::endl;
+            throw std::runtime_error("Logger failed to open file");
+        }
+    }
     Logger::~Logger(){ out_.flush(); }
 
     std::string Logger::nowTs(){
