@@ -8,7 +8,7 @@ namespace p2p {
         data_.assign(bytes, 0);
     }
 
-    bool Bitfield::has(size_t idx) const{
+    [[maybe_unused]] bool Bitfield::has(size_t idx) const{
         if (idx >= pieces_) throw std::out_of_range("bitfield index");
         size_t byte = idx / 8; size_t bit = 7 - (idx % 8);
         return (data_[byte] >> bit) & 1U;
@@ -20,7 +20,7 @@ namespace p2p {
         data_[byte] |= (1u << bit);
     }
 
-    Bitfield Bitfield::fromBytes(const std::vector<uint8_t>& bytes, size_t pieces){
+    [[maybe_unused]] Bitfield Bitfield::fromBytes(const std::vector<uint8_t>& bytes, size_t pieces){
         Bitfield bf; bf.pieces_ = pieces; bf.data_ = bytes; return bf;
     }
 

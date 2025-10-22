@@ -11,11 +11,11 @@
 namespace p2p {
 
     struct RemoteNeighborState {
-        bool amChoked = true; // I am choked by them
-        bool amInterested = false; // I am interested in them
-        bool peerChoked = true; // they are choked by me
-        bool peerInterested = false;// they are interested in me
-        double recentDownloadRate = 0.0; // bytes/sec over last interval
+//        bool amChoked = true; // I am choked by them
+//        bool amInterested = false; // I am interested in them
+//        bool peerChoked = true; // they are choked by me
+//        bool peerInterested = false;// they are interested in me
+//        double recentDownloadRate = 0.0; // bytes/sec over last interval
         Bitfield lastBitfield;
     };
 
@@ -23,11 +23,11 @@ namespace p2p {
     public:
         explicit PeerState(Bitfield selfBits) : selfBitfield_(std::move(selfBits)) {}
 
-        Bitfield& selfBitfield() { return selfBitfield_; }
+        //Bitfield& selfBitfield() { return selfBitfield_; }
 
-        RemoteNeighborState& neighbor(int peerId) { return neighbors_[peerId]; }
+        //RemoteNeighborState& neighbor(int peerId) { return neighbors_[peerId]; }
 
-        std::vector<int> interestedNeighbors() const;
+        //std::vector<int> interestedNeighbors() const;
 
     private:
         Bitfield selfBitfield_;

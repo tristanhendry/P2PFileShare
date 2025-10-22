@@ -1,4 +1,17 @@
+# CMake / CLion
+cmake-build-*/
 build/
+CMakeFiles/
+CMakeCache.txt
+install_manifest.txt
+Testing/
+CTestTestfile.cmake
+_DartConfiguration.tcl
+
+# Your project data
 *.log
 peer_*/
+
+# macOS / IDE
 .DS_Store
+.idea/

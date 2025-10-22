@@ -8,7 +8,7 @@
 namespace p2p {
 
     struct CommonConfig {
-        int numberOfPreferredNeighbors = 2;
+        [[maybe_unused]] int numberOfPreferredNeighbors = 2;
         int unchokingIntervalSec = 5;
         int optimisticUnchokingIntervalSec = 15;
         std::string fileName;
@@ -28,8 +28,8 @@ namespace p2p {
     struct PeerInfoCfg {
         std::vector<PeerInfoRow> rows;
         static PeerInfoCfg fromFile(const std::string& path);
-        std::optional<PeerInfoRow> findById(int peerId) const;
-        std::vector<PeerInfoRow> earlierPeers(int peerId) const; // rows with lower index in file
+        [[nodiscard]] std::optional<PeerInfoRow> findById(int peerId) const;
+        [[nodiscard]] std::vector<PeerInfoRow> earlierPeers(int peerId) const; // rows with lower index in file
     };
 
     struct EnvPaths {

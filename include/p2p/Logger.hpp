@@ -11,15 +11,17 @@ namespace p2p {
 
     class Logger {
     public:
-        explicit Logger(std::string path);
+        explicit Logger(const std::string& path);
         ~Logger();
 
         void info(const std::string& msg);
-        void error(const std::string& msg);
 
-// Required log formats (subset for midpoint)
+        [[maybe_unused]] void error(const std::string& msg);
+
+        // Required log formats (subset for midpoint)
         void onConnectOut(int fromId, int toId);
-        void onConnectIn(int toId, int fromId);
+
+        [[maybe_unused]] void onConnectIn(int toId, int fromId);
 
     private:
         std::ofstream out_;

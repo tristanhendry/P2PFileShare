@@ -11,8 +11,8 @@ namespace p2p {
     std::array<uint8_t, Handshake::LEN> Handshake::encode(int peerId){
         std::array<uint8_t, LEN> out{};
         std::memcpy(out.data(), HEADER.data(), HEADER.size());
-// bytes 18..27 are zeros by default (value-initialized)
-// peerId at 28..31 big-endian
+        // bytes 18..27 are zeros by default (value-initialized)
+        // peerId at 28..31 big-endian
         out[28] = static_cast<uint8_t>((peerId >> 24) & 0xFF);
         out[29] = static_cast<uint8_t>((peerId >> 16) & 0xFF);
         out[30] = static_cast<uint8_t>((peerId >> 8) & 0xFF);
@@ -43,7 +43,7 @@ namespace p2p {
         return b;
     }
 
-    Message Message::parse(const std::vector<uint8_t>& buf){
+    [[maybe_unused]] Message Message::parse(const std::vector<uint8_t>& buf){
         if (buf.size() < 5) throw std::runtime_error("Short message");
         uint32_t len = get32(buf.data());
         if (len + 4 != buf.size()) throw std::runtime_error("Length mismatch");
@@ -53,12 +53,12 @@ namespace p2p {
     }
 
     namespace msg {
-        Message have(uint32_t pieceIndex){
+        [[maybe_unused]] Message have(uint32_t pieceIndex){
             std::vector<uint8_t> p; p.reserve(4); put32(p, pieceIndex); return Message::make(MessageType::HAVE, std::move(p));
         }
-        Message bitfield(const std::vector<uint8_t>& bits){ return Message::make(MessageType::BITFIELD, bits); }
-        Message request(uint32_t pieceIndex){ std::vector<uint8_t> p; put32(p, pieceIndex); return Message::make(MessageType::REQUEST, std::move(p)); }
-        Message piece(uint32_t pieceIndex, const std::vector<uint8_t>& data){ std::vector<uint8_t> p; put32(p, pieceIndex); p.insert(p.end(), data.begin(), data.end()); return Message::make(MessageType::PIECE, std::move(p)); }
+        [[maybe_unused]] Message bitfield(const std::vector<uint8_t>& bits){ return Message::make(MessageType::BITFIELD, bits); }
+        [[maybe_unused]] Message request(uint32_t pieceIndex){ std::vector<uint8_t> p; put32(p, pieceIndex); return Message::make(MessageType::REQUEST, std::move(p)); }
+        [[maybe_unused]] Message piece(uint32_t pieceIndex, const std::vector<uint8_t>& data){ std::vector<uint8_t> p; put32(p, pieceIndex); p.insert(p.end(), data.begin(), data.end()); return Message::make(MessageType::PIECE, std::move(p)); }
     }
 
 } // namespace p2p

@@ -39,14 +39,18 @@ namespace p2p {
         void start();
         void join();
 
-        int remotePeerId() const { return remotePeerId_; }
+        //int remotePeerId() const { return remotePeerId_; }
 
-// Send message (thread-safe)
+        // Send message (thread-safe)
         void send(const Message& m);
+
+        // disable copy
+        ConnectionHandler(const ConnectionHandler&) = delete;
+        ConnectionHandler& operator=(const ConnectionHandler&) = delete;
 
     private:
         int selfId_;
-        Logger& logger_;
+        [[maybe_unused]] Logger& logger_;
         socket_t sock_;
         std::thread thr_;
         std::mutex sendMtx_;
@@ -54,12 +58,8 @@ namespace p2p {
         int remotePeerId_ = -1;
 
         void run_();
-        bool sendAll_(const uint8_t* data, size_t n);
-        bool recvAll_(uint8_t* data, size_t n);
-
-// disable copy
-        ConnectionHandler(const ConnectionHandler&) = delete;
-        ConnectionHandler& operator=(const ConnectionHandler&) = delete;
+        bool sendAll_(const uint8_t* data, size_t n) const;
+        bool recvAll_(uint8_t* data, size_t n) const;
     };
 
     class PeerServer {
@@ -76,11 +76,11 @@ namespace p2p {
         int port_;
         std::thread thr_;
         std::atomic<bool> running_{false};
-#if defined(_WIN32)
-        socket_t srv_ = INVALID_SOCKET;
-#else
-        socket_t srv_ = -1;
-#endif
+        #if defined(_WIN32)
+            socket_t srv_ = INVALID_SOCKET;
+        #else
+            socket_t srv_ = -1;
+        #endif
     };
 
     class PeerClient {
