@@ -75,7 +75,7 @@ namespace p2p {
 
         fs::path root = workDir;
         b.paths.workDir = root.string();
-        b.paths.peerDir = (root / (std::string("peer_") + std::to_string(selfId))).string();
+        b.paths.peerDir = (root / std::to_string(selfId)).string();
         b.paths.logFile = (root / (std::string("log_peer_") + std::to_string(selfId) + ".log")).string();
 
         fs::create_directories(b.paths.peerDir);
