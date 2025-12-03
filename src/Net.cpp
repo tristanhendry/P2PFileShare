@@ -254,19 +254,61 @@ namespace p2p {
 
                 case MessageType::INTERESTED: {
                     logger_.onReceivedInterested(selfId_, remotePeerId_);
-                    // Later: mark neighbor as "interested" in shared state.
+
+                    // Remote is now interested in us
+                    areTheyInterested_ = true;
+
+                    // Minimal policy: if they're interested, unchoke them
+                    if (amChokingThem_) {
+                        auto m = msg::unchoke();
+                        send(m);
+                        amChokingThem_ = false;
+                        // If Logger has a method for sending choke/unchoke, call it here.
+                    }
+
                     break;
                 }
 
                 case MessageType::NOT_INTERESTED: {
                     logger_.onReceivedNotInterested(selfId_, remotePeerId_);
-                    // Later: mark neighbor as "not interested" in shared state.
+
+                    // Remote no longer interested
+                    areTheyInterested_ = false;
+
+                    // Minimal policy: if they're not interested, choke them
+                    if (!amChokingThem_) {
+                        auto m = msg::choke();
+                        send(m);
+                        amChokingThem_ = true;
+                        // Optional: log send
+                    }
+
+                    break;
+                }
+
+                case MessageType::CHOKE: {
+                    theyAreChokingUs_ = true;
+                    // If Logger has an onReceivedChoke, call it:
+                    logger_.onReceivedChoke(selfId_, remotePeerId_);
+                    break;
+                }
+
+                case MessageType::UNCHOKE: {
+                    theyAreChokingUs_ = false;
+                    logger_.onReceivedUnchoke(selfId_, remotePeerId_);
+                    break;
+                }
+
+                case MessageType::PIECE: {
+                    if (body.size() < 1 + 4) {
+                        break; // malformed: no index/payload
+                    }
+                    size_t payloadLen = body.size() - 1 - 4;
+                    bytesDownloadedThisInterval_ += payloadLen;
                     break;
                 }
 
                 default:
-                    // Other message types (CHOKE, UNCHOKE, REQUEST, PIECE, etc.)
-                    // will be handled in later steps.
                     break;
             }
         }

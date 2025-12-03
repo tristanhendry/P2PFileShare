@@ -26,6 +26,11 @@ namespace p2p {
         void onReceivedInterested(int selfId, int fromId);
         void onReceivedNotInterested(int selfId, int fromId);
         void onReceivedHave(int selfId, int fromId, uint32_t pieceIndex);
+        void onReceivedChoke(int selfId, int fromId);
+        void onReceivedUnchoke(int selfId, int fromId);
+
+        void onSentChoke(int selfId, int toId);
+        void onSentUnchoke(int selfId, int toId);
 
     private:
         std::ofstream out_;

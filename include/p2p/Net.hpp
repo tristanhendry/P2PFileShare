@@ -67,6 +67,13 @@ namespace p2p {
         int remotePeerId_ = -1;
         bool incoming_ = false;   // new: indicates if this is an incoming connection
 
+        // Per-neighbor (per-connection) state:
+        bool areTheyInterested_ = false;       // remote sent INTERESTED / NOT_INTERESTED
+        bool amChokingThem_     = true;        // are we currently choking this neighbor?
+        bool theyAreChokingUs_  = false;       // did we receive CHOKE from them?
+
+        long bytesDownloadedThisInterval_ = 0; // used for preferred-neighbor stats
+
         void run_();
         bool sendAll_(const uint8_t* data, size_t n) const;
         bool recvAll_(uint8_t* data, size_t n) const;

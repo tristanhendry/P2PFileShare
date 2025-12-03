@@ -54,6 +54,34 @@ namespace p2p {
              std::to_string(fromId) + ".");
     }
 
+    void Logger::onReceivedChoke(int selfId, int fromId){
+        // [Time]: Peer [peer_ID 1] is choked by [peer_ID 2].
+        info("Peer " + std::to_string(selfId) +
+             " is choked by " +
+             std::to_string(fromId) + ".");
+    }
+
+    void Logger::onReceivedUnchoke(int selfId, int fromId){
+        // [Time]: Peer [peer_ID 1] is unchoked by [peer_ID 2].
+        info("Peer " + std::to_string(selfId) +
+             " is unchoked by " +
+             std::to_string(fromId) + ".");
+    }
+
+    void Logger::onSentChoke(int selfId, int toId){
+        // [Time]: Peer [peer_ID 1] choked [peer_ID 2].
+        info("Peer " + std::to_string(selfId) +
+             " choked " +
+             std::to_string(toId) + ".");
+    }
+
+    void Logger::onSentUnchoke(int selfId, int toId){
+        // [Time]: Peer [peer_ID 1] unchoked [peer_ID 2].
+        info("Peer " + std::to_string(selfId) +
+             " unchoked " +
+             std::to_string(toId) + ".");
+    }
+
     void Logger::onReceivedHave(int selfId, int fromId, uint32_t pieceIndex){
         // [Time]: Peer [peer_ID 1] received the 'have' message from [peer_ID 2] for the piece [piece index].
         info("Peer " + std::to_string(selfId) +
