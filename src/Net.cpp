@@ -67,52 +67,106 @@ namespace p2p {
         return true;
     }
 
-    void ConnectionHandler::run_(){
-        // Send handshake
+        void ConnectionHandler::run_(){
+        // 1) Send handshake
         auto hs = Handshake::encode(selfId_);
-        if (!sendAll_(hs.data(), hs.size())) return;
+        if (!sendAll_(hs.data(), hs.size())) {
+            return;
+        }
 
-        // Read handshake
+        // 2) Receive handshake
         std::array<uint8_t, Handshake::LEN> buf{};
-        if (!recvAll_(buf.data(), buf.size())) return;
-        try { remotePeerId_ = Handshake::decodePeerId(buf); }
-        catch(...) { return; }
+        if (!recvAll_(buf.data(), buf.size())) {
+            return;
+        }
 
-        // Log incoming connection once we know who connected
+        try {
+            remotePeerId_ = Handshake::decodePeerId(buf);
+        } catch (...) {
+            return; // invalid handshake
+        }
+
+        // 3) Log incoming connection once we know who connected
         if (incoming_) {
-            // "Peer X is connected from Peer Y."
             logger_.onConnectIn(selfId_, remotePeerId_);
         }
 
-        // Peers that don't have any pieces yet may skip the bitfield message.
-        bool hasAnyPiece = false;
-        for (auto b : selfBitfield_) {
-            if (b != 0) { hasAnyPiece = true; break; }
-        }
-        if (hasAnyPiece) {
-            auto bfMsg = msg::bitfield(selfBitfield_);
-            send(bfMsg);
+        // 4) After handshake, send our bitfield (if we have one)
+        if (!selfBitfield_.empty()) {
+            auto m = msg::bitfield(selfBitfield_);
+            send(m);
         }
 
-        // After handshake, read loop for actual messages
+        // Helper: recompute whether WE are interested in this neighbor,
+        // and send INTERESTED / NOT_INTERESTED if our state changes.
+        auto recomputeInterestAndSend = [this]() {
+            if (remoteBitfield_.empty()) {
+                // We don't know anything about the remote's pieces yet.
+                return;
+            }
+
+            bool interested = false;
+
+            if (selfBitfield_.empty()) {
+                // We have nothing: if remote has any 1-bits, we are interested.
+                for (uint8_t b : remoteBitfield_) {
+                    if (b != 0) {
+                        interested = true;
+                        break;
+                    }
+                }
+            } else {
+                // Compare byte-by-byte: remote & ~self
+                size_t n = std::min(selfBitfield_.size(), remoteBitfield_.size());
+                for (size_t i = 0; i < n; ++i) {
+                    uint8_t newBits =
+                        remoteBitfield_[i] &
+                        static_cast<uint8_t>(~selfBitfield_[i]);
+                    if (newBits != 0) {
+                        interested = true;
+                        break;
+                    }
+                }
+            }
+
+            if (interested != amInterested_) {
+                amInterested_ = interested;
+                if (interested) {
+                    auto m = msg::interested();
+                    send(m);
+                } else {
+                    auto m = msg::notInterested();
+                    send(m);
+                }
+            }
+        };
+
+        // 5) Main receive loop for length-prefixed messages
         while (running_.load()) {
-            // Read 4-byte length; graceful exit if socket closed
+            // Read 4-byte length; if socket closes, we break
             uint8_t lenBuf[4];
-            if (!recvAll_(lenBuf, 4)) break;
-            uint32_t len = (uint32_t(lenBuf[0])<<24) |
-                           (uint32_t(lenBuf[1])<<16) |
-                           (uint32_t(lenBuf[2])<<8)  |
-                           uint32_t(lenBuf[3]);
+            if (!recvAll_(lenBuf, 4)) {
+                break;
+            }
 
+            uint32_t len =
+                (uint32_t(lenBuf[0]) << 24) |
+                (uint32_t(lenBuf[1]) << 16) |
+                (uint32_t(lenBuf[2]) << 8)  |
+                 uint32_t(lenBuf[3]);
+
+            // Keep-alive: length 0 => no type, no payload
             if (len == 0) {
-                // Possible keep-alive or malformed; ignore and continue.
                 continue;
             }
 
+            // Read message body (type + payload)
             std::vector<uint8_t> body(len);
-            if (!recvAll_(body.data(), len)) break;
+            if (!recvAll_(body.data(), len)) {
+                break;
+            }
 
-            // First byte is message type, remaining bytes (if any) are payload
+            // First byte is the message type
             MessageType type = static_cast<MessageType>(body[0]);
 
             switch (type) {
@@ -124,18 +178,18 @@ namespace p2p {
                     }
 
                     std::vector<uint8_t> remoteBits(body.begin() + 1, body.end());
-
-                    // Optional debug log (you already saw these earlier)
                     logger_.info("Received bitfield from peer " +
                                  std::to_string(remotePeerId_) + ".");
 
-                    // Decide if we are interested:
-                    // interested if the remote has at least one piece that we don't.
+                    // Store remote bitfield for this connection
+                    remoteBitfield_ = std::move(remoteBits);
+
+                    // --- Initial interest decision: always send one message ---
                     bool interested = false;
 
                     if (selfBitfield_.empty()) {
                         // We have nothing: if remote has any 1-bits, we are interested.
-                        for (uint8_t b : remoteBits) {
+                        for (uint8_t b : remoteBitfield_) {
                             if (b != 0) {
                                 interested = true;
                                 break;
@@ -143,10 +197,10 @@ namespace p2p {
                         }
                     } else {
                         // Compare byte-by-byte: remote & ~self
-                        size_t n = std::min(selfBitfield_.size(), remoteBits.size());
+                        size_t n = std::min(selfBitfield_.size(), remoteBitfield_.size());
                         for (size_t i = 0; i < n; ++i) {
                             uint8_t newBits =
-                                remoteBits[i] &
+                                remoteBitfield_[i] &
                                 static_cast<uint8_t>(~selfBitfield_[i]);
                             if (newBits != 0) {
                                 interested = true;
@@ -155,7 +209,8 @@ namespace p2p {
                         }
                     }
 
-                    // Send INTERESTED or NOT_INTERESTED accordingly
+                    // Send INTERESTED or NOT_INTERESTED once for the initial bitfield
+                    amInterested_ = interested;
                     if (interested) {
                         auto m = msg::interested();
                         send(m);
@@ -167,26 +222,56 @@ namespace p2p {
                     break;
                 }
 
+                case MessageType::HAVE: {
+                    // Payload: 4-byte piece index (big-endian)
+                    if (body.size() < 1 + 4) {
+                        break; // malformed
+                    }
+
+                    uint32_t idx =
+                        (uint32_t(body[1]) << 24) |
+                        (uint32_t(body[2]) << 16) |
+                        (uint32_t(body[3]) << 8)  |
+                         uint32_t(body[4]);
+
+                    // Log according to spec
+                    logger_.onReceivedHave(selfId_, remotePeerId_, idx);
+
+                    // Update remoteBitfield_ to reflect this piece
+                    size_t byte = idx / 8;
+                    size_t bit  = 7 - (idx % 8);
+
+                    if (remoteBitfield_.size() <= byte) {
+                        remoteBitfield_.resize(byte + 1, 0);
+                    }
+
+                    remoteBitfield_[byte] |= (uint8_t(1) << bit);
+
+                    // Re-evaluate interest based on the new piece
+                    recomputeInterestAndSend();
+                    break;
+                }
+
                 case MessageType::INTERESTED: {
-                    // [Time]: Peer [peer_ID 1] received the 'interested' message from [peer_ID 2].
                     logger_.onReceivedInterested(selfId_, remotePeerId_);
                     // Later: mark neighbor as "interested" in shared state.
                     break;
                 }
 
                 case MessageType::NOT_INTERESTED: {
-                    // [Time]: Peer [peer_ID 1] received the 'not interested' message from [peer_ID 2].
                     logger_.onReceivedNotInterested(selfId_, remotePeerId_);
                     // Later: mark neighbor as "not interested" in shared state.
                     break;
                 }
 
                 default:
-                    // For now, ignore other message types; we will flesh these out later.
+                    // Other message types (CHOKE, UNCHOKE, REQUEST, PIECE, etc.)
+                    // will be handled in later steps.
                     break;
             }
         }
     }
+
 
     void ConnectionHandler::send(const Message& m){
         std::lock_guard<std::mutex> lk(sendMtx_);

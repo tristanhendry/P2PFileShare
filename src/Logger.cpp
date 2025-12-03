@@ -54,4 +54,13 @@ namespace p2p {
              std::to_string(fromId) + ".");
     }
 
+    void Logger::onReceivedHave(int selfId, int fromId, uint32_t pieceIndex){
+        // [Time]: Peer [peer_ID 1] received the 'have' message from [peer_ID 2] for the piece [piece index].
+        info("Peer " + std::to_string(selfId) +
+             " received the 'have' message from " +
+             std::to_string(fromId) +
+             " for the piece " + std::to_string(pieceIndex) + ".");
+    }
+
+
 } // namespace p2p

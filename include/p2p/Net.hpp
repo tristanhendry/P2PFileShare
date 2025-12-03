@@ -58,6 +58,12 @@ namespace p2p {
         std::atomic<bool> running_{false};
         std::vector<uint8_t> selfBitfield_;
 
+        // Track what the remote peer has, as learned from BITFIELD / HAVE.
+        std::vector<uint8_t> remoteBitfield_;
+
+        // Whether WE are currently interested in this remote peer.
+        bool amInterested_ = false;
+
         int remotePeerId_ = -1;
         bool incoming_ = false;   // new: indicates if this is an incoming connection
 
