@@ -10,6 +10,7 @@
 #include "p2p/Net.hpp"
 //#include "p2p/Protocol.hpp"
 #include "p2p/Scheduler.hpp"
+#include "p2p/PieceManager.hpp"
 
 using namespace p2p;
 
@@ -36,6 +37,25 @@ int main(int argc, char** argv){
         std::cout << "Logged startup message" << std::endl;
         std::cout.flush();
 
+        // PieceManager setup
+        // Store the data file inside this peer's directory.
+        std::string filePath = cfg.paths.peerDir + "/" + cfg.common.fileName;
+
+        // Create the PieceManager on the heap and store it in the global pointer
+        auto pieceMgr = std::make_shared<p2p::PieceManager>(
+            filePath,
+            cfg.common.fileSizeBytes,
+            cfg.common.pieceSizeBytes,
+            cfg.self.hasFile   // true if this peer starts with complete file
+        );
+
+        // Make it globally visible to all connections
+        p2p::gPieceManager = pieceMgr;
+
+        // Build initial BITFIELD bytes from PieceManager
+        auto bitfieldBytes = pieceMgr->toBitfieldBytes();
+
+        /*
         // Bitfield setup
         auto pieces = computePieceCount(cfg.common.fileSizeBytes, cfg.common.pieceSizeBytes);
 
@@ -47,6 +67,7 @@ int main(int argc, char** argv){
         }
 
         auto bitfieldBytes = myBits.toBytes();
+        */
 
         PeerServer server(selfId, logger, cfg.self.port, bitfieldBytes);
 
