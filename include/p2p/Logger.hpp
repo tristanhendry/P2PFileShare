@@ -23,6 +23,9 @@ namespace p2p {
 
         [[maybe_unused]] void onConnectIn(int toId, int fromId);
 
+        void onReceivedInterested(int selfId, int fromId);
+        void onReceivedNotInterested(int selfId, int fromId);
+
     private:
         std::ofstream out_;
         std::mutex mtx_;

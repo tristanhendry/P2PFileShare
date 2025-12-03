@@ -40,4 +40,18 @@ namespace p2p {
         info("Peer " + std::to_string(toId) + " is connected from Peer " + std::to_string(fromId) + ".");
     }
 
+    void Logger::onReceivedInterested(int selfId, int fromId){
+        // [Time]: Peer [peer_ID 1] received the 'interested' message from [peer_ID 2].
+        info("Peer " + std::to_string(selfId) +
+             " received the 'interested' message from " +
+             std::to_string(fromId) + ".");
+    }
+
+    void Logger::onReceivedNotInterested(int selfId, int fromId){
+        // [Time]: Peer [peer_ID 1] received the 'not interested' message from [peer_ID 2].
+        info("Peer " + std::to_string(selfId) +
+             " received the 'not interested' message from " +
+             std::to_string(fromId) + ".");
+    }
+
 } // namespace p2p

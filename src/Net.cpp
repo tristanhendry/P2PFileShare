@@ -117,17 +117,72 @@ namespace p2p {
 
             switch (type) {
                 case MessageType::BITFIELD: {
-                    // Spec: we must handle received bitfield and later decide interest.
-                    logger_.info(
-                        "Received bitfield from peer " +
-                        std::to_string(remotePeerId_) + "."
-                    );
-                    // TODO: parse payload into a Bitfield and store in PeerState.
+                    // Payload is the remote peer's bitfield bytes
+                    if (body.size() <= 1) {
+                        // malformed bitfield, ignore
+                        break;
+                    }
+
+                    std::vector<uint8_t> remoteBits(body.begin() + 1, body.end());
+
+                    // Optional debug log (you already saw these earlier)
+                    logger_.info("Received bitfield from peer " +
+                                 std::to_string(remotePeerId_) + ".");
+
+                    // Decide if we are interested:
+                    // interested if the remote has at least one piece that we don't.
+                    bool interested = false;
+
+                    if (selfBitfield_.empty()) {
+                        // We have nothing: if remote has any 1-bits, we are interested.
+                        for (uint8_t b : remoteBits) {
+                            if (b != 0) {
+                                interested = true;
+                                break;
+                            }
+                        }
+                    } else {
+                        // Compare byte-by-byte: remote & ~self
+                        size_t n = std::min(selfBitfield_.size(), remoteBits.size());
+                        for (size_t i = 0; i < n; ++i) {
+                            uint8_t newBits =
+                                remoteBits[i] &
+                                static_cast<uint8_t>(~selfBitfield_[i]);
+                            if (newBits != 0) {
+                                interested = true;
+                                break;
+                            }
+                        }
+                    }
+
+                    // Send INTERESTED or NOT_INTERESTED accordingly
+                    if (interested) {
+                        auto m = msg::interested();
+                        send(m);
+                    } else {
+                        auto m = msg::notInterested();
+                        send(m);
+                    }
+
+                    break;
+                }
+
+                case MessageType::INTERESTED: {
+                    // [Time]: Peer [peer_ID 1] received the 'interested' message from [peer_ID 2].
+                    logger_.onReceivedInterested(selfId_, remotePeerId_);
+                    // Later: mark neighbor as "interested" in shared state.
+                    break;
+                }
+
+                case MessageType::NOT_INTERESTED: {
+                    // [Time]: Peer [peer_ID 1] received the 'not interested' message from [peer_ID 2].
+                    logger_.onReceivedNotInterested(selfId_, remotePeerId_);
+                    // Later: mark neighbor as "not interested" in shared state.
                     break;
                 }
 
                 default:
-                    // Other messages will be handled later.
+                    // For now, ignore other message types; we will flesh these out later.
                     break;
             }
         }
