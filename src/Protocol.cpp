@@ -53,12 +53,55 @@ namespace p2p {
     }
 
     namespace msg {
-        [[maybe_unused]] Message have(uint32_t pieceIndex){
-            std::vector<uint8_t> p; p.reserve(4); put32(p, pieceIndex); return Message::make(MessageType::HAVE, std::move(p));
+
+        // ---- Control messages: no payload ----
+
+        Message choke() {
+            return Message::make(MessageType::CHOKE);
         }
-        [[maybe_unused]] Message bitfield(const std::vector<uint8_t>& bits){ return Message::make(MessageType::BITFIELD, bits); }
-        [[maybe_unused]] Message request(uint32_t pieceIndex){ std::vector<uint8_t> p; put32(p, pieceIndex); return Message::make(MessageType::REQUEST, std::move(p)); }
-        [[maybe_unused]] Message piece(uint32_t pieceIndex, const std::vector<uint8_t>& data){ std::vector<uint8_t> p; put32(p, pieceIndex); p.insert(p.end(), data.begin(), data.end()); return Message::make(MessageType::PIECE, std::move(p)); }
-    }
+
+        Message unchoke() {
+            return Message::make(MessageType::UNCHOKE);
+        }
+
+        Message interested() {
+            return Message::make(MessageType::INTERESTED);
+        }
+
+        Message notInterested() {
+            return Message::make(MessageType::NOT_INTERESTED);
+        }
+
+        // ---- Data-related messages ----
+
+        Message have(uint32_t pieceIndex){
+            std::vector<uint8_t> p;
+            p.reserve(4);
+            put32(p, pieceIndex);
+            return Message::make(MessageType::HAVE, std::move(p));
+        }
+
+        Message bitfield(const std::vector<uint8_t>& bits){
+            return Message::make(MessageType::BITFIELD, bits);
+        }
+
+        Message request(uint32_t pieceIndex){
+            std::vector<uint8_t> p;
+            p.reserve(4);
+            put32(p, pieceIndex);
+            return Message::make(MessageType::REQUEST, std::move(p));
+        }
+
+        Message piece(uint32_t pieceIndex, const std::vector<uint8_t>& data){
+            std::vector<uint8_t> p;
+            p.reserve(4 + data.size());
+            put32(p, pieceIndex);
+            p.insert(p.end(), data.begin(), data.end());
+            return Message::make(MessageType::PIECE, std::move(p));
+        }
+
+    } // namespace msg
+
+
 
 } // namespace p2p

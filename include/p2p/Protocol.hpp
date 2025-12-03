@@ -10,8 +10,14 @@
 namespace p2p {
 
     enum class MessageType : uint8_t {
-        //CHOKE=0, UNCHOKE=1, INTERESTED=2, NOT_INTERESTED=3,
-        HAVE=4, BITFIELD=5, REQUEST=6, PIECE=7
+        CHOKE = 0,
+        UNCHOKE = 1,
+        INTERESTED = 2,
+        NOT_INTERESTED = 3,
+        HAVE = 4,
+        BITFIELD = 5,
+        REQUEST = 6,
+        PIECE = 7
     };
 
     struct Handshake {
@@ -36,15 +42,22 @@ namespace p2p {
     };
 
     namespace msg {
-//        inline Message choke() { return Message::make(MessageType::CHOKE); }
-//        inline Message unchoke() { return Message::make(MessageType::UNCHOKE); }
-//        inline Message interested() { return Message::make(MessageType::INTERESTED); }
-//        inline Message notInterested() { return Message::make(MessageType::NOT_INTERESTED); }
-//        Message have(uint32_t pieceIndex);
-//        Message bitfield(const std::vector<uint8_t>& bits);
-//        Message request(uint32_t pieceIndex);
-//        Message piece(uint32_t pieceIndex, const std::vector<uint8_t>& data);
+
+        // Control messages (no payload)
+        Message choke();
+        Message unchoke();
+        Message interested();
+        Message notInterested();
+
+        // Data-related messages (with payloads)
+        Message have(uint32_t pieceIndex);
+        Message bitfield(const std::vector<uint8_t>& bits);
+        Message request(uint32_t pieceIndex);
+        Message piece(uint32_t pieceIndex, const std::vector<uint8_t>& data);
+
     }
+
+
 
 } // namespace p2p
 

@@ -37,22 +37,24 @@ int main(int argc, char** argv){
         std::cout.flush();
 
         // Bitfield setup
-        size_t pieces = computePieceCount(cfg.common.fileSizeBytes, cfg.common.pieceSizeBytes);
+        auto pieces = computePieceCount(cfg.common.fileSizeBytes, cfg.common.pieceSizeBytes);
+
         Bitfield myBits(pieces);
         if (cfg.self.hasFile) {
-            for (size_t i=0;i<pieces;++i) myBits.set(i);
+            for (size_t i = 0; i < pieces; ++i) {
+                myBits.set(i);
+            }
         }
-        PeerState state(myBits);
 
-        // Server
-        PeerServer server(selfId, logger, cfg.self.port);
-        server.start();
+        auto bitfieldBytes = myBits.toBytes();
+
+        PeerServer server(selfId, logger, cfg.self.port, bitfieldBytes);
 
         // Connect to earlier peers
         std::vector<std::unique_ptr<ConnectionHandler>> conns;
         for (const auto& r : cfg.peers.earlierPeers(selfId)){
             Endpoint ep{r.host, r.port};
-            auto h = PeerClient::connect(selfId, logger, ep);
+            auto h = PeerClient::connect(selfId, logger, ep, bitfieldBytes);
             if (h){ logger.onConnectOut(selfId, r.peerId); conns.push_back(std::move(h)); }
         }
 

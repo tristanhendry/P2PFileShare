@@ -16,14 +16,26 @@ namespace p2p {
         #endif
     }
 
-    ConnectionHandler::ConnectionHandler(int selfId, Logger& logger, socket_t sock)
-            : selfId_(selfId), logger_(logger), sock_(sock) {}
+    ConnectionHandler::ConnectionHandler(int selfId, Logger& logger, socket_t sock,
+                                     bool incoming, std::vector<uint8_t> selfBitfield)
+    : selfId_(selfId),
+      logger_(logger),
+      sock_(sock),
+      incoming_(incoming),
+      selfBitfield_(std::move(selfBitfield)) {}
+
+
 
     ConnectionHandler::~ConnectionHandler(){
         running_.store(false);
         if (thr_.joinable()) thr_.join();
-        if (sock_>=0) closesock(sock_);
+    #if defined(_WIN32)
+        if (sock_ != INVALID_SOCKET) closesock(sock_);
+    #else
+        if (sock_ >= 0) closesock(sock_);
+    #endif
     }
+
 
     void ConnectionHandler::start(){ running_.store(true); thr_ = std::thread(&ConnectionHandler::run_, this); }
     void ConnectionHandler::join(){ if (thr_.joinable()) thr_.join(); }
@@ -36,7 +48,8 @@ namespace p2p {
         #else
             ssize_t r = ::send(sock_, data+sent, n-sent, 0);
         #endif
-            if (r<=0) return false; sent += size_t(r);
+            if (r<=0) return false;
+            sent += size_t(r);
         }
         return true;
     }
@@ -65,6 +78,12 @@ namespace p2p {
         try { remotePeerId_ = Handshake::decodePeerId(buf); }
         catch(...) { return; }
 
+        // Log incoming connection once we know who connected
+        if (incoming_) {
+            // "Peer X is connected from Peer Y."
+            logger_.onConnectIn(selfId_, remotePeerId_);
+        }
+
         // After handshake, idle read loop for actual messages (ignored at midpoint)
         while (running_.load()) {
             // Peek 4-byte length; graceful exit if socket closed
@@ -83,8 +102,13 @@ namespace p2p {
         sendAll_(bytes.data(), bytes.size());
     }
 
-    PeerServer::PeerServer(int selfId, Logger& logger, int listenPort)
-            : selfId_(selfId), logger_(logger), port_(listenPort) {}
+    PeerServer::PeerServer(int selfId, Logger& logger, int listenPort,
+                       std::vector<uint8_t> selfBitfield)
+    : selfId_(selfId),
+      logger_(logger),
+      port_(listenPort),
+      selfBitfield_(std::move(selfBitfield)) {}
+
 
     PeerServer::~PeerServer(){ stop(); }
 
@@ -105,10 +129,11 @@ namespace p2p {
                 sockaddr_in cli{}; socklen_t cl = sizeof(cli);
                 socket_t s = ::accept(srv_, (sockaddr*)&cli, &cl);
                 if (s<0) continue;
-                // Spawn handler
-                auto* h = new ConnectionHandler(selfId_, logger_, s);
+                // Spawn handler for an incoming connection
+                auto* h = new ConnectionHandler(selfId_, logger_, s, /*incoming=*/true, selfBitfield_);
                 h->start();
                 // We intentionally leak handlers for midpoint simplicity; OS reclaims on exit.
+
             }
             if (srv_>=0) { closesock(srv_); srv_=-1; }
             #endif
@@ -117,7 +142,9 @@ namespace p2p {
 
     void PeerServer::stop(){ running_.store(false); if (thr_.joinable()) thr_.join(); }
 
-    std::unique_ptr<ConnectionHandler> PeerClient::connect(int selfId, Logger& logger, const Endpoint& ep){
+    std::unique_ptr<ConnectionHandler>
+    PeerClient::connect(int selfId, Logger& logger, const Endpoint& ep,
+                        const std::vector<uint8_t>& selfBitfield) {
     #if defined(_WIN32)
         (void)selfId; (void)logger; (void)ep; return nullptr; // midpoint
     #else
@@ -136,7 +163,9 @@ namespace p2p {
         freeaddrinfo(res);
         if (s<0) return nullptr;
 
-        auto h = std::make_unique<ConnectionHandler>(selfId, logger, s);
+        auto h = std::make_unique<ConnectionHandler>(selfId, logger, s,
+                                                 /*incoming=*/false,
+                                                 selfBitfield);
         h->start();
         return h;
     #endif

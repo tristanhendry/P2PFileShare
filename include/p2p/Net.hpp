@@ -33,7 +33,8 @@ namespace p2p {
 
     class ConnectionHandler {
     public:
-        ConnectionHandler(int selfId, Logger& logger, socket_t sock);
+        ConnectionHandler(int selfId, Logger& logger, socket_t sock, bool incoming,
+                      std::vector<uint8_t> selfBitfield);
         ~ConnectionHandler();
 
         void start();
@@ -50,21 +51,25 @@ namespace p2p {
 
     private:
         int selfId_;
-        [[maybe_unused]] Logger& logger_;
+        Logger& logger_;
         socket_t sock_;
         std::thread thr_;
         std::mutex sendMtx_;
         std::atomic<bool> running_{false};
+        std::vector<uint8_t> selfBitfield_;
+
         int remotePeerId_ = -1;
+        bool incoming_ = false;   // new: indicates if this is an incoming connection
 
         void run_();
         bool sendAll_(const uint8_t* data, size_t n) const;
         bool recvAll_(uint8_t* data, size_t n) const;
     };
 
+
     class PeerServer {
     public:
-        PeerServer(int selfId, Logger& logger, int listenPort);
+        PeerServer(int selfId, Logger& logger, int listenPort, std::vector<uint8_t> selfBitfield);
         ~PeerServer();
 
         void start();
@@ -76,6 +81,7 @@ namespace p2p {
         int port_;
         std::thread thr_;
         std::atomic<bool> running_{false};
+        std::vector<uint8_t> selfBitfield_;
         #if defined(_WIN32)
             socket_t srv_ = INVALID_SOCKET;
         #else
@@ -85,8 +91,13 @@ namespace p2p {
 
     class PeerClient {
     public:
-        static std::unique_ptr<ConnectionHandler> connect(int selfId, Logger& logger, const Endpoint& ep);
+        static std::unique_ptr<ConnectionHandler> connect(
+            int selfId,
+            Logger& logger,
+            const Endpoint& ep,
+            const std::vector<uint8_t>& selfBitfield);
     };
+
 
 } // namespace p2p
 
