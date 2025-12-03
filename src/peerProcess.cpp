@@ -50,6 +50,8 @@ int main(int argc, char** argv){
 
         PeerServer server(selfId, logger, cfg.self.port, bitfieldBytes);
 
+        server.start();
+
         // Connect to earlier peers
         std::vector<std::unique_ptr<ConnectionHandler>> conns;
         for (const auto& r : cfg.peers.earlierPeers(selfId)){

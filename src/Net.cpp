@@ -84,15 +84,52 @@ namespace p2p {
             logger_.onConnectIn(selfId_, remotePeerId_);
         }
 
-        // After handshake, idle read loop for actual messages (ignored at midpoint)
+        // Peers that don't have any pieces yet may skip the bitfield message.
+        bool hasAnyPiece = false;
+        for (auto b : selfBitfield_) {
+            if (b != 0) { hasAnyPiece = true; break; }
+        }
+        if (hasAnyPiece) {
+            auto bfMsg = msg::bitfield(selfBitfield_);
+            send(bfMsg);
+        }
+
+        // After handshake, read loop for actual messages
         while (running_.load()) {
-            // Peek 4-byte length; graceful exit if socket closed
+            // Read 4-byte length; graceful exit if socket closed
             uint8_t lenBuf[4];
             if (!recvAll_(lenBuf, 4)) break;
-            uint32_t len = (uint32_t(lenBuf[0])<<24)|(uint32_t(lenBuf[1])<<16)|(uint32_t(lenBuf[2])<<8)|uint32_t(lenBuf[3]);
+            uint32_t len = (uint32_t(lenBuf[0])<<24) |
+                           (uint32_t(lenBuf[1])<<16) |
+                           (uint32_t(lenBuf[2])<<8)  |
+                           uint32_t(lenBuf[3]);
+
+            if (len == 0) {
+                // Possible keep-alive or malformed; ignore and continue.
+                continue;
+            }
+
             std::vector<uint8_t> body(len);
             if (!recvAll_(body.data(), len)) break;
-            // do nothing for midpoint
+
+            // First byte is message type, remaining bytes (if any) are payload
+            MessageType type = static_cast<MessageType>(body[0]);
+
+            switch (type) {
+                case MessageType::BITFIELD: {
+                    // Spec: we must handle received bitfield and later decide interest.
+                    logger_.info(
+                        "Received bitfield from peer " +
+                        std::to_string(remotePeerId_) + "."
+                    );
+                    // TODO: parse payload into a Bitfield and store in PeerState.
+                    break;
+                }
+
+                default:
+                    // Other messages will be handled later.
+                    break;
+            }
         }
     }
 
