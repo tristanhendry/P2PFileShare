@@ -12,6 +12,7 @@
 
 #include "Protocol.hpp"
 #include "Logger.hpp"
+#include "p2p/PieceManager.hpp"
 
 // POSIX sockets (Linux/macOS). Windows: stubs only.
 #if defined(_WIN32)

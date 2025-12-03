@@ -141,6 +141,31 @@ namespace p2p {
             }
         };
 
+        // Helper: pick the next piece to request from this neighbor.
+        auto pickNextRequestPiece = [this]() -> int {
+            if (!p2p::gPieceManager) return -1;
+
+            auto& pm = *p2p::gPieceManager;
+            size_t total = pm.pieceCount();
+
+            for (size_t i = 0; i < total; ++i) {
+                // Skip pieces we already have.
+                if (pm.havePiece(i)) continue;
+
+                // Check if remote has this piece according to remoteBitfield_.
+                size_t byte = i / 8;
+                size_t bit  = 7 - (i % 8);
+                if (byte >= remoteBitfield_.size()) continue;
+
+                bool remoteHas =
+                    (remoteBitfield_[byte] & (uint8_t(1) << bit)) != 0;
+                if (!remoteHas) continue;
+
+                return static_cast<int>(i);
+            }
+            return -1; // nothing useful to request
+        };
+
         // 5) Main receive loop for length-prefixed messages
         while (running_.load()) {
             // Read 4-byte length; if socket closes, we break
@@ -214,6 +239,16 @@ namespace p2p {
                     if (interested) {
                         auto m = msg::interested();
                         send(m);
+
+                        // TEMP: immediately request a piece from this neighbor.
+                        // Person B can later gate this on "unchoked" state.
+                        if (p2p::gPieceManager) {
+                            int next = pickNextRequestPiece();
+                            if (next >= 0) {
+                                auto req = msg::request(static_cast<uint32_t>(next));
+                                send(req);
+                            }
+                        }
                     } else {
                         auto m = msg::notInterested();
                         send(m);
@@ -261,6 +296,103 @@ namespace p2p {
                 case MessageType::NOT_INTERESTED: {
                     logger_.onReceivedNotInterested(selfId_, remotePeerId_);
                     // Later: mark neighbor as "not interested" in shared state.
+                    break;
+                }
+
+                // Handle a REQUEST from the remote peer: send them the piece.
+                case MessageType::REQUEST: {
+                    if (!p2p::gPieceManager) {
+                        break;
+                    }
+
+                    // Payload: 4-byte piece index (big-endian)
+                    if (body.size() < 1 + 4) {
+                        break; // malformed
+                    }
+
+                    uint32_t idx =
+                        (uint32_t(body[1]) << 24) |
+                        (uint32_t(body[2]) << 16) |
+                        (uint32_t(body[3]) << 8)  |
+                         uint32_t(body[4]);
+
+                    auto& pm = *p2p::gPieceManager;
+
+                    // Only serve if we actually have this piece.
+                    if (idx >= pm.pieceCount() || !pm.havePiece(idx)) {
+                        break;
+                    }
+
+                    try {
+                        auto data = pm.readPiece(idx);
+                        auto m = msg::piece(idx, data);
+                        send(m);
+                        // (Optional) Person B can count uploaded bytes here.
+                    } catch (...) {
+                        // On read failure, ignore this REQUEST for now.
+                    }
+
+                    break;
+                }
+
+                // Handle a PIECE sent by the remote: write it and maybe request another.
+                case MessageType::PIECE: {
+                    if (!p2p::gPieceManager) {
+                        break;
+                    }
+
+                    // Need at least 4 bytes of piece index
+                    if (body.size() < 1 + 4) {
+                        break;
+                    }
+
+                    uint32_t idx =
+                        (uint32_t(body[1]) << 24) |
+                        (uint32_t(body[2]) << 16) |
+                        (uint32_t(body[3]) << 8)  |
+                         uint32_t(body[4]);
+
+                    // Remaining bytes are the piece data
+                    std::vector<uint8_t> payload;
+                    payload.reserve(body.size() - 1 - 4);
+                    payload.insert(payload.end(), body.begin() + 1 + 4, body.end());
+
+                    auto& pm = *p2p::gPieceManager;
+
+                    if (idx >= pm.pieceCount()) {
+                        break;
+                    }
+
+                    try {
+                        bool wasNew = pm.writePiece(idx, payload);
+                        if (wasNew) {
+                            // Update our local bitfield cache for this connection.
+                            size_t byte = idx / 8;
+                            size_t bit  = 7 - (idx % 8);
+
+                            if (selfBitfield_.size() <= byte) {
+                                selfBitfield_.resize(byte + 1, 0);
+                            }
+                            selfBitfield_[byte] |= (uint8_t(1) << bit);
+
+                            // Inform neighbor(s) that we now have this piece.
+                            auto haveMsg = msg::have(idx);
+                            send(haveMsg);
+
+                            // Person B can track download stats here using payload.size().
+                        }
+
+                        // Try to request another piece from this neighbor.
+                        int next = pickNextRequestPiece();
+                        if (next >= 0) {
+                            auto req = msg::request(static_cast<uint32_t>(next));
+                            send(req);
+                        }
+
+                    } catch (...) {
+                        // Ignore write failures for now.
+                    }
+
                     break;
                 }
 
