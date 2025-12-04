@@ -3,10 +3,22 @@
 #include <vector>
 #include <cstring>
 #include <stdexcept>
+#include <algorithm>
 
 namespace p2p {
 
-    //static bool setNonBlocking(socket_t){ return true; } // midpoint: ignore
+    // Global connection registry
+    std::vector<std::shared_ptr<ConnectionHandler>> gAllConnections;
+    std::mutex gConnectionsMutex;
+    
+    void broadcastToAllPeers(const Message& m) {
+        std::lock_guard<std::mutex> lk(gConnectionsMutex);
+        for (auto& conn : gAllConnections) {
+            if (conn) {
+                conn->send(m);
+            }
+        }
+    }
 
     static void closesock(socket_t s){
         #if defined(_WIN32)
@@ -24,8 +36,6 @@ namespace p2p {
       incoming_(incoming),
       selfBitfield_(std::move(selfBitfield)) {}
 
-
-
     ConnectionHandler::~ConnectionHandler(){
         running_.store(false);
         if (thr_.joinable()) thr_.join();
@@ -36,9 +46,28 @@ namespace p2p {
     #endif
     }
 
-
-    void ConnectionHandler::start(){ running_.store(true); thr_ = std::thread(&ConnectionHandler::run_, this); }
-    void ConnectionHandler::join(){ if (thr_.joinable()) thr_.join(); }
+    void ConnectionHandler::start(){ 
+        running_.store(true); 
+        thr_ = std::thread(&ConnectionHandler::run_, this); 
+    }
+    
+    void ConnectionHandler::join(){ 
+        if (thr_.joinable()) thr_.join(); 
+    }
+    
+    void ConnectionHandler::chokeRemote() {
+        if (!amChokingThem_.load()) {
+            amChokingThem_.store(true);
+            send(msg::choke());
+        }
+    }
+    
+    void ConnectionHandler::unchokeRemote() {
+        if (amChokingThem_.load()) {
+            amChokingThem_.store(false);
+            send(msg::unchoke());
+        }
+    }
 
     bool ConnectionHandler::sendAll_(const uint8_t* data, size_t n) const{
         size_t sent=0;
@@ -62,12 +91,13 @@ namespace p2p {
         #else
             ssize_t r = ::recv(sock_, data+got, n-got, MSG_WAITALL);
         #endif
-            if (r<=0) return false; got += size_t(r);
+            if (r<=0) return false; 
+            got += size_t(r);
         }
         return true;
     }
 
-        void ConnectionHandler::run_(){
+    void ConnectionHandler::run_(){
         // 1) Send handshake
         auto hs = Handshake::encode(selfId_);
         if (!sendAll_(hs.data(), hs.size())) {
@@ -91,7 +121,7 @@ namespace p2p {
             logger_.onConnectIn(selfId_, remotePeerId_);
         }
 
-        // 4) After handshake, send our bitfield (if we have one)
+        // 4) After handshake, send our bitfield 
         if (!selfBitfield_.empty()) {
             auto m = msg::bitfield(selfBitfield_);
             send(m);
@@ -115,7 +145,7 @@ namespace p2p {
                     }
                 }
             } else {
-                // Compare byte-by-byte: remote & ~self
+                // Compare byte-by-byte
                 size_t n = std::min(selfBitfield_.size(), remoteBitfield_.size());
                 for (size_t i = 0; i < n; ++i) {
                     uint8_t newBits =
@@ -179,12 +209,11 @@ namespace p2p {
                 (uint32_t(lenBuf[2]) << 8)  |
                  uint32_t(lenBuf[3]);
 
-            // Keep-alive: length 0 => no type, no payload
             if (len == 0) {
                 continue;
             }
 
-            // Read message body (type + payload)
+            // Read message body
             std::vector<uint8_t> body(len);
             if (!recvAll_(body.data(), len)) {
                 break;
@@ -197,7 +226,6 @@ namespace p2p {
                 case MessageType::BITFIELD: {
                     // Payload is the remote peer's bitfield bytes
                     if (body.size() <= 1) {
-                        // malformed bitfield, ignore
                         break;
                     }
 
@@ -208,63 +236,16 @@ namespace p2p {
                     // Store remote bitfield for this connection
                     remoteBitfield_ = std::move(remoteBits);
 
-                    // DEBUG logging
-                    logger_.info("DEBUG: selfBitfield size=" + std::to_string(selfBitfield_.size()) + 
-                                 ", remoteBitfield size=" + std::to_string(remoteBitfield_.size()));
-
-                    // Initial interest decision: always send one message
-                    bool interested = false;
-
-                    if (selfBitfield_.empty()) {
-                        // We have nothing: if remote has any 1-bits, we are interested.
-                        for (uint8_t b : remoteBitfield_) {
-                            if (b != 0) {
-                                interested = true;
-                                break;
-                            }
-                        }
-                    } else {
-                        // Compare byte-by-byte: remote & ~self
-                        size_t n = std::min(selfBitfield_.size(), remoteBitfield_.size());
-                        for (size_t i = 0; i < n; ++i) {
-                            uint8_t newBits =
-                                remoteBitfield_[i] &
-                                static_cast<uint8_t>(~selfBitfield_[i]);
-                            if (newBits != 0) {
-                                interested = true;
-                                break;
-                            }
-                        }
-                    }
-
-                    // DEBUG logging
-                    logger_.info("DEBUG: interested=" + std::to_string(interested));
-
-                    // Send INTERESTED or NOT_INTERESTED once for the initial bitfield
-                    amInterested_ = interested;
-                    if (interested) {
-                        auto m = msg::interested();
-                        send(m);
-
-                        if (p2p::gPieceManager) {
-                            int next = pickNextRequestPiece();
-                            if (next >= 0) {
-                                auto req = msg::request(static_cast<uint32_t>(next));
-                                send(req);
-                            }
-                        }
-                    } else {
-                        auto m = msg::notInterested();
-                        send(m);
-                    }
+                    // Initial interest decision
+                    recomputeInterestAndSend();
 
                     break;
                 }
 
                 case MessageType::HAVE: {
-                    // Payload: 4-byte piece index (big-endian)
+                    // Payload
                     if (body.size() < 1 + 4) {
-                        break; // malformed
+                        break;
                     }
 
                     uint32_t idx =
@@ -273,29 +254,27 @@ namespace p2p {
                         (uint32_t(body[3]) << 8)  |
                          uint32_t(body[4]);
 
-                    // Log according to spec
                     logger_.onReceivedHave(selfId_, remotePeerId_, idx);
 
-                    // Update remoteBitfield_ to reflect this piece
+                    // Update remote bitfield
                     size_t byte = idx / 8;
                     size_t bit  = 7 - (idx % 8);
 
                     if (remoteBitfield_.size() <= byte) {
                         remoteBitfield_.resize(byte + 1, 0);
                     }
-
                     remoteBitfield_[byte] |= (uint8_t(1) << bit);
 
-                    // Re-evaluate interest based on the new piece
+                    // Recompute interest
                     recomputeInterestAndSend();
+
                     break;
                 }
 
                 case MessageType::INTERESTED: {
                     logger_.onReceivedInterested(selfId_, remotePeerId_);
                     
-                    auto unchoke = msg::unchoke();
-                    send(unchoke);
+                    theyAreInterested_.store(true);
                     
                     break;
                 }
@@ -303,8 +282,7 @@ namespace p2p {
                 case MessageType::NOT_INTERESTED: {
                     logger_.onReceivedNotInterested(selfId_, remotePeerId_);
                     
-                    auto choke = msg::choke();
-                    send(choke);
+                    theyAreInterested_.store(false);
                     
                     break;
                 }
@@ -317,7 +295,7 @@ namespace p2p {
                 case MessageType::UNCHOKE: {
                     logger_.onUnchoked(selfId_, remotePeerId_);
                     
-                    // We're unchoked! Start requesting if we're interested
+                   
                     if (amInterested_ && p2p::gPieceManager) {
                         int next = pickNextRequestPiece();
                         if (next >= 0) {
@@ -333,7 +311,7 @@ namespace p2p {
                         break;
                     }
 
-                    // Payload: 4-byte piece index (big-endian)
+                    // Payload: 4-byte piece index 
                     if (body.size() < 1 + 4) {
                         break; // malformed
                     }
@@ -343,6 +321,11 @@ namespace p2p {
                         (uint32_t(body[2]) << 16) |
                         (uint32_t(body[3]) << 8)  |
                          uint32_t(body[4]);
+
+                    
+                    if (amChokingThem_.load()) {
+                        break;
+                    }
 
                     auto& pm = *p2p::gPieceManager;
 
@@ -357,13 +340,13 @@ namespace p2p {
                         send(m);
                         
                     } catch (...) {
-                        
+                        // Failed to read piece
                     }
 
                     break;
                 }
 
-                // Handle a PIECE sent by the remote: write it and maybe request another.
+                // Handle a PIECE sent by the remote
                 case MessageType::PIECE: {
                     if (!p2p::gPieceManager) {
                         break;
@@ -391,6 +374,9 @@ namespace p2p {
                         break;
                     }
 
+                    // Track bytes downloaded for rate calculation
+                    bytesDownloaded_.fetch_add(payload.size());
+
                     try {
                         bool wasNew = pm.writePiece(idx, payload);
                         if (wasNew) {
@@ -414,11 +400,9 @@ namespace p2p {
                             }
                             selfBitfield_[byte] |= (uint8_t(1) << bit);
 
-                            // Inform neighbor(s) that we now have this piece.
+                            // Broadcast HAVE to ALL peers, not just this one
                             auto haveMsg = msg::have(idx);
-                            send(haveMsg);
-
-                            
+                            broadcastToAllPeers(haveMsg);
                         }
 
                         // Try to request another piece from this neighbor.
@@ -426,22 +410,25 @@ namespace p2p {
                         if (next >= 0) {
                             auto req = msg::request(static_cast<uint32_t>(next));
                             send(req);
+                        } else {
+                            // No more pieces to request 
+                            if (amInterested_) {
+                                amInterested_ = false;
+                                send(msg::notInterested());
+                            }
                         }
 
                     } catch (...) {
-                       
                     }
 
                     break;
                 }
 
                 default:
-                    
                     break;
             }
         }
     }
-
 
     void ConnectionHandler::send(const Message& m){
         std::lock_guard<std::mutex> lk(sendMtx_);
@@ -455,7 +442,6 @@ namespace p2p {
       logger_(logger),
       port_(listenPort),
       selfBitfield_(std::move(selfBitfield)) {}
-
 
     PeerServer::~PeerServer(){ stop(); }
 
@@ -475,23 +461,31 @@ namespace p2p {
                 sockaddr_in cli{}; socklen_t cl = sizeof(cli);
                 socket_t s = ::accept(srv_, (sockaddr*)&cli, &cl);
                 if (s<0) continue;
-                // Spawn handler for an incoming connection
-                auto* h = new ConnectionHandler(selfId_, logger_, s, true, selfBitfield_);
+                
+                // Create shared_ptr and add to global registry
+                auto h = std::make_shared<ConnectionHandler>(selfId_, logger_, s, true, selfBitfield_);
                 h->start();
-
+                
+                {
+                    std::lock_guard<std::mutex> lk(gConnectionsMutex);
+                    gAllConnections.push_back(h);
+                }
             }
             if (srv_>=0) { closesock(srv_); srv_=-1; }
             #endif
         });
     }
 
-    void PeerServer::stop(){ running_.store(false); if (thr_.joinable()) thr_.join(); }
+    void PeerServer::stop(){ 
+        running_.store(false); 
+        if (thr_.joinable()) thr_.join(); 
+    }
 
-    std::unique_ptr<ConnectionHandler>
+    std::shared_ptr<ConnectionHandler>
     PeerClient::connect(int selfId, Logger& logger, const Endpoint& ep,
                         const std::vector<uint8_t>& selfBitfield) {
     #if defined(_WIN32)
-        (void)selfId; (void)logger; (void)ep; return nullptr; // midpoint
+        (void)selfId; (void)logger; (void)ep; return nullptr; 
     #else
         addrinfo hints{}; hints.ai_family=AF_UNSPEC; hints.ai_socktype=SOCK_STREAM;
         addrinfo* res=nullptr;
@@ -508,10 +502,17 @@ namespace p2p {
         freeaddrinfo(res);
         if (s<0) return nullptr;
 
-        auto h = std::make_unique<ConnectionHandler>(selfId, logger, s,
-                                                 /*incoming=*/false,
+        auto h = std::make_shared<ConnectionHandler>(selfId, logger, s,
+                                                 false,
                                                  selfBitfield);
         h->start();
+        
+        // Add to global registry
+        {
+            std::lock_guard<std::mutex> lk(gConnectionsMutex);
+            gAllConnections.push_back(h);
+        }
+        
         return h;
     #endif
     }

@@ -9,12 +9,12 @@
 #include <memory>
 #include <optional>
 #include <mutex>
+#include <chrono>
 
 #include "Protocol.hpp"
 #include "Logger.hpp"
 #include "p2p/PieceManager.hpp"
 
-// POSIX sockets (Linux/macOS). Windows: stubs only.
 #if defined(_WIN32)
 #include <winsock2.h>
 using socket_t = SOCKET;
@@ -41,10 +41,23 @@ namespace p2p {
         void start();
         void join();
 
-        //int remotePeerId() const { return remotePeerId_; }
-
-        // Send message (thread-safe)
+        int remotePeerId() const { return remotePeerId_; }
+        
+        // Send message 
         void send(const Message& m);
+        
+        // State queries
+        bool isTheyInterested() const { return theyAreInterested_.load(); }
+        bool isAmChokingThem() const { return amChokingThem_.load(); }
+        
+        // Get and reset download statistics
+        size_t getBytesDownloadedAndReset() {
+            return bytesDownloaded_.exchange(0);
+        }
+        
+        // Control choking state
+        void chokeRemote();
+        void unchokeRemote();
 
         // disable copy
         ConnectionHandler(const ConnectionHandler&) = delete;
@@ -59,14 +72,23 @@ namespace p2p {
         std::atomic<bool> running_{false};
         std::vector<uint8_t> selfBitfield_;
 
-        // Track what the remote peer has, as learned from BITFIELD / HAVE.
+        // Track what the remote peer has
         std::vector<uint8_t> remoteBitfield_;
 
         // Whether WE are currently interested in this remote peer.
         bool amInterested_ = false;
+        
+        // Track remote peer's interest in us
+        std::atomic<bool> theyAreInterested_{false};
+        
+        // Track if we are currently choking them
+        std::atomic<bool> amChokingThem_{true};  
+        
+        // Track download statistics
+        std::atomic<size_t> bytesDownloaded_{0};
 
         int remotePeerId_ = -1;
-        bool incoming_ = false;   // new: indicates if this is an incoming connection
+        bool incoming_ = false;
 
         void run_();
         bool sendAll_(const uint8_t* data, size_t n) const;
@@ -98,14 +120,20 @@ namespace p2p {
 
     class PeerClient {
     public:
-        static std::unique_ptr<ConnectionHandler> connect(
+        static std::shared_ptr<ConnectionHandler> connect(
             int selfId,
             Logger& logger,
             const Endpoint& ep,
             const std::vector<uint8_t>& selfBitfield);
     };
 
+    // Global connection registry
+    extern std::vector<std::shared_ptr<ConnectionHandler>> gAllConnections;
+    extern std::mutex gConnectionsMutex;
+    
+    // Broadcast message to all connected peers
+    void broadcastToAllPeers(const Message& m);
 
 } // namespace p2p
 
-#endif // P2P_NET_HPP
+#endif 
