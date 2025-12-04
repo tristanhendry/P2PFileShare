@@ -2,17 +2,25 @@
 #include <vector>
 #include <memory>
 #include <filesystem>
+#include <atomic>
+#include <thread>
+#include <chrono>
 
 #include "p2p/Config.hpp"
 #include "p2p/Logger.hpp"
 #include "p2p/Bitfield.hpp"
 #include "p2p/PeerState.hpp"
 #include "p2p/Net.hpp"
-//#include "p2p/Protocol.hpp"
 #include "p2p/Scheduler.hpp"
 #include "p2p/PieceManager.hpp"
 
 using namespace p2p;
+
+// Global flag to track if we've logged completion
+static std::atomic<bool> gHasLoggedCompletion{false};
+
+// Global flag to signal all peers to terminate
+static std::atomic<bool> gShouldTerminate{false};
 
 static size_t computePieceCount(long long fileSize, int pieceSize){
     if (pieceSize<=0) return 0;
@@ -46,7 +54,7 @@ int main(int argc, char** argv){
             filePath,
             cfg.common.fileSizeBytes,
             cfg.common.pieceSizeBytes,
-            cfg.self.hasFile   // true if this peer starts with complete file
+            cfg.self.hasFile   
         );
 
         // Make it globally visible to all connections
@@ -55,22 +63,7 @@ int main(int argc, char** argv){
         // Build initial BITFIELD bytes from PieceManager
         auto bitfieldBytes = pieceMgr->toBitfieldBytes();
 
-        /*
-        // Bitfield setup
-        auto pieces = computePieceCount(cfg.common.fileSizeBytes, cfg.common.pieceSizeBytes);
-
-        Bitfield myBits(pieces);
-        if (cfg.self.hasFile) {
-            for (size_t i = 0; i < pieces; ++i) {
-                myBits.set(i);
-            }
-        }
-
-        auto bitfieldBytes = myBits.toBytes();
-        */
-
         PeerServer server(selfId, logger, cfg.self.port, bitfieldBytes);
-
         server.start();
 
         // Connect to earlier peers
@@ -88,16 +81,63 @@ int main(int argc, char** argv){
         RepeatingTask optimisticTick(cfg.common.optimisticUnchokingIntervalSec, [&]{
             logger.info("[tick] optimistic unchoke reselection (stub)");
         });
-        preferredTick.start(); optimisticTick.start();
+        preferredTick.start(); 
+        optimisticTick.start();
 
-        // Keep main thread alive until Ctrl-C
-        logger.info("peerProcess running. Press Ctrl-C to exit.");
-        for(;;) std::this_thread::sleep_for(std::chrono::seconds(60));
+        // Track if this peer started with the file (seeder)
+        bool wasInitialSeeder = cfg.self.hasFile;
 
-        // Cleanup (unreachable in this simple loop)
-        preferredTick.stop(); optimisticTick.stop();
+        // Background thread to check for completion
+        std::thread completionChecker([&](){
+            bool hasLoggedCompletion = false;
+            
+            while (!gShouldTerminate.load()) {
+                std::this_thread::sleep_for(std::chrono::seconds(2));
+                
+                // Check if this peer has completed download
+                if (!hasLoggedCompletion && pieceMgr->isComplete()) {
+                    // Only log completion if we WEREN'T a seeder
+                    if (!wasInitialSeeder) {
+                        logger.onDownloadComplete(selfId);
+                        hasLoggedCompletion = true;
+                        gHasLoggedCompletion.store(true);
+                        
+                        // After completing download, wait 10 seconds then terminate
+                        std::this_thread::sleep_for(std::chrono::seconds(10));
+                        logger.info("Peer " + std::to_string(selfId) + 
+                                  " terminating - download complete and grace period elapsed.");
+                        gShouldTerminate.store(true);
+                        break;
+                    }
+                }
+            }
+        });
+
+        // Keep main thread alive until termination signal or Ctrl-C
+        logger.info("peerProcess running. Waiting for file transfer completion...");
+        
+        while (!gShouldTerminate.load()) {
+            std::this_thread::sleep_for(std::chrono::seconds(1));
+        }
+
+        // Cleanup
+        logger.info("Shutting down peer " + std::to_string(selfId));
+        
+        preferredTick.stop(); 
+        optimisticTick.stop();
+        
+        if (completionChecker.joinable()) {
+            completionChecker.join();
+        }
+        
         server.stop();
-        for (auto& h: conns) if (h) h->join();
+        
+        for (auto& h: conns) {
+            if (h) h->join();
+        }
+        
+        logger.info("Peer " + std::to_string(selfId) + " shutdown complete.");
+        
         return 0;
     } catch (const std::exception& ex) {
         std::cerr << "Fatal: " << ex.what() << "\n";

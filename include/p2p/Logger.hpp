@@ -4,6 +4,7 @@
 #include <fstream>
 #include <mutex>
 #include <string>
+#include <vector>
 #include <chrono>
 #include <ctime>
 
@@ -15,17 +16,28 @@ namespace p2p {
         ~Logger();
 
         void info(const std::string& msg);
+        void error(const std::string& msg);
 
-        [[maybe_unused]] void error(const std::string& msg);
-
-        // Required log formats (subset for midpoint)
+        // Connection events
         void onConnectOut(int fromId, int toId);
+        void onConnectIn(int toId, int fromId);
 
-        [[maybe_unused]] void onConnectIn(int toId, int fromId);
-
+        // Interest messages
         void onReceivedInterested(int selfId, int fromId);
         void onReceivedNotInterested(int selfId, int fromId);
         void onReceivedHave(int selfId, int fromId, uint32_t pieceIndex);
+
+        // Choking events
+        void onChoked(int selfId, int fromId);
+        void onUnchoked(int selfId, int fromId);
+
+        // Download events
+        void onDownloadedPiece(int selfId, uint32_t pieceIndex, int fromId, int totalPieces);
+        void onDownloadComplete(int selfId);
+
+        // Neighbor selection events
+        void onChangePreferredNeighbors(int selfId, const std::vector<int>& neighborIds);
+        void onChangeOptimisticUnchoke(int selfId, int neighborId);
 
     private:
         std::ofstream out_;
