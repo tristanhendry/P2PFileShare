@@ -5,6 +5,8 @@
 #include <atomic>
 #include <thread>
 #include <chrono>
+#include <cstdlib>
+#include <ctime>
 
 #include "p2p/Config.hpp"
 #include "p2p/Logger.hpp"
@@ -32,6 +34,9 @@ int main(int argc, char** argv){
     try {
         if (argc < 2){ std::cerr << "Usage: peerProcess <peerId>\n"; return 1; }
         int selfId = std::stoi(argv[1]);
+
+        // Seed random for optimistic unchoke
+        srand(time(nullptr) + selfId);
 
         // Assume working dir is current directory
         std::string workDir = std::filesystem::current_path().string();
@@ -71,16 +76,31 @@ int main(int argc, char** argv){
         for (const auto& r : cfg.peers.earlierPeers(selfId)){
             Endpoint ep{r.host, r.port};
             auto h = PeerClient::connect(selfId, logger, ep, bitfieldBytes);
-            if (h){ logger.onConnectOut(selfId, r.peerId); conns.push_back(std::move(h)); }
+            if (h){ 
+                logger.onConnectOut(selfId, r.peerId); 
+                conns.push_back(std::move(h));
+            }
         }
 
-        // Simple schedulers (midpoint: just log ticks)
+        
         RepeatingTask preferredTick(cfg.common.unchokingIntervalSec, [&]{
-            logger.info("[tick] preferred neighbors reselection (stub)");
+           
+            std::vector<int> preferred;
+            logger.onChangePreferredNeighbors(selfId, preferred);
         });
+        
         RepeatingTask optimisticTick(cfg.common.optimisticUnchokingIntervalSec, [&]{
-            logger.info("[tick] optimistic unchoke reselection (stub)");
+            // pick a random peer (if any exist)
+            if (!conns.empty() && !conns.empty()) {
+                int randomIdx = rand() % conns.size();
+                auto peers = cfg.peers.rows;
+                if (!peers.empty()) {
+                    int luckyPeer = peers[rand() % peers.size()].peerId;
+                    logger.onChangeOptimisticUnchoke(selfId, luckyPeer);
+                }
+            }
         });
+        
         preferredTick.start(); 
         optimisticTick.start();
 
