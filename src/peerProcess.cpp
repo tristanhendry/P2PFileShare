@@ -2,6 +2,8 @@
 #include <vector>
 #include <memory>
 #include <filesystem>
+#include <algorithm>
+#include <cstdlib>
 
 #include "p2p/Config.hpp"
 #include "p2p/Logger.hpp"
@@ -23,6 +25,7 @@ int main(int argc, char** argv){
     try {
         if (argc < 2){ std::cerr << "Usage: peerProcess <peerId>\n"; return 1; }
         int selfId = std::stoi(argv[1]);
+        int optimisticNeighborId = -1;
 
         // Assume working dir is current directory
         std::string workDir = std::filesystem::current_path().string();
@@ -60,12 +63,113 @@ int main(int argc, char** argv){
             if (h){ logger.onConnectOut(selfId, r.peerId); conns.push_back(std::move(h)); }
         }
 
-        // Simple schedulers (midpoint: just log ticks)
+        // Simple preferred neighbors: unchoke all interested neighbors.
         RepeatingTask preferredTick(cfg.common.unchokingIntervalSec, [&]{
-            logger.info("[tick] preferred neighbors reselection (stub)");
+            // How many preferred neighbors we want (from Common.cfg)
+            const int k = cfg.common.numberOfPreferredNeighbors;
+
+            // Collect all interested neighbors with their download rates.
+            struct NeighborStat {
+                ConnectionHandler* handler;
+                long bytes;
+            };
+            std::vector<NeighborStat> stats;
+
+            for (auto &h : conns) {
+                if (!h) continue;
+
+                // Only consider neighbors who are interested in us.
+                if (h->areTheyInterested()) {
+                    stats.push_back(NeighborStat{
+                            h.get(),
+                            h->bytesDownloadedThisInterval()
+                    });
+                }
+            }
+
+            // Sort by bytes downloaded this interval (descending).
+            std::sort(stats.begin(), stats.end(),
+                      [](const NeighborStat& a, const NeighborStat& b){
+                          return a.bytes > b.bytes;
+                      });
+
+            std::vector<int> preferredIds;
+
+            // First, choke everyone by default (we'll unchoke the chosen ones).
+            for (auto &h : conns) {
+                if (!h) continue;
+                h->setChokeState(true);
+            }
+
+            // Unchoke up to k best interested neighbors.
+            for (size_t i = 0; i < stats.size() && (int)i < k; ++i) {
+                auto* h = stats[i].handler;
+                h->setChokeState(false);  // unchoke preferred
+                preferredIds.push_back(h->remotePeerId());
+            }
+
+            // Also keep the current optimistic neighbor unchoked (if any),
+            // even if they are not in the top-k.
+            if (optimisticNeighborId != -1) {
+                for (auto &h : conns) {
+                    if (!h) continue;
+                    if (h->remotePeerId() == optimisticNeighborId) {
+                        h->setChokeState(false);
+                        // If not already in preferredIds, we do NOT add them here,
+                        // because they are "optimistically" unchoked, not preferred.
+                        break;
+                    }
+                }
+            }
+
+            // Reset stats for next interval.
+            for (auto &h : conns) {
+                if (!h) continue;
+                h->resetBytesDownloadedThisInterval();
+            }
+
+            // Log preferred neighbors (if any).
+            if (!preferredIds.empty()) {
+                std::string msg = "Peer " + std::to_string(selfId) +
+                                  " has the preferred neighbors ";
+                for (size_t i = 0; i < preferredIds.size(); ++i) {
+                    if (i > 0) msg += ", ";
+                    msg += std::to_string(preferredIds[i]);
+                }
+                msg += ".";
+                logger.info(msg);
+            }
+            // else: don't log anything if we currently have no interested neighbors.
         });
         RepeatingTask optimisticTick(cfg.common.optimisticUnchokingIntervalSec, [&]{
-            logger.info("[tick] optimistic unchoke reselection (stub)");
+            std::vector<ConnectionHandler*> candidates;
+
+            for (auto &h : conns) {
+                if (!h) continue;
+
+                // Candidate: currently choked by us
+                if (h->amChokingThem()) {
+                    candidates.push_back(h.get());
+                }
+            }
+
+            if (candidates.empty()) {
+                return; // nothing to do
+            }
+
+            // Pick random candidate
+            ConnectionHandler* chosen =
+                    candidates[std::rand() % candidates.size()];
+
+            optimisticNeighborId = chosen->remotePeerId();
+
+            // Ensure they're unchoked
+            chosen->setChokeState(false);
+
+            std::string msg = "Peer " + std::to_string(selfId) +
+                              " has the optimistically unchoked neighbor " +
+                              std::to_string(optimisticNeighborId) + ".";
+            logger.info(msg);
         });
         preferredTick.start(); optimisticTick.start();
 

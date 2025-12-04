@@ -40,7 +40,29 @@ namespace p2p {
         void start();
         void join();
 
-        //int remotePeerId() const { return remotePeerId_; }
+        int remotePeerId() const { return remotePeerId_; }
+
+        bool areTheyInterested() const { return areTheyInterested_; }
+        bool amChokingThem() const { return amChokingThem_; }
+        bool theyAreChokingUs() const { return theyAreChokingUs_; }
+
+        long bytesDownloadedThisInterval() const { return bytesDownloadedThisInterval_; }
+        void resetBytesDownloadedThisInterval() { bytesDownloadedThisInterval_ = 0; }
+
+        // Helper for manager to enforce choke/unchoke decision:
+        void setChokeState(bool shouldChoke) {
+            if (shouldChoke && !amChokingThem_) {
+                auto m = msg::choke();
+                send(m);
+                amChokingThem_ = true;
+                // optional: logger_.onSentChoke(selfId_, remotePeerId_);
+            } else if (!shouldChoke && amChokingThem_) {
+                auto m = msg::unchoke();
+                send(m);
+                amChokingThem_ = false;
+                // optional: logger_.onSentUnchoke(selfId_, remotePeerId_);
+            }
+        }
 
         // Send message (thread-safe)
         void send(const Message& m);
